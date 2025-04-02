@@ -9,9 +9,9 @@ import Text from 'components/Text/Text';
 import { WithPermissionControlDisplay } from 'containers/WithPermissionControl/WithPermissionControlDisplay';
 import { WithPermissionControlTooltip } from 'containers/WithPermissionControl/WithPermissionControlTooltip';
 import { User } from 'models/user/user.types';
-import { rootStore } from 'state';
 import { AppFeature } from 'state/features';
 import { useStore } from 'state/useStore';
+import { openErrorNotification } from 'utils';
 import { isUserActionAllowed, UserAction, UserActions } from 'utils/authorization';
 
 import styles from './PhoneVerification.module.css';
@@ -98,60 +98,49 @@ const PhoneVerification = observer((props: PhoneVerificationProps) => {
     });
   }, [userPk, userStore.forgetPhone, userStore.loadUser]);
 
-  const onSubmitCallback = useCallback(
-    async (type) => {
-      let codeVerification = isCodeSent;
-      if (type === 'verification_call') {
-        codeVerification = isPhoneCallInitiated;
-      }
-      if (codeVerification) {
-        userStore.verifyPhone(userPk, code).then(() => {
+  const onSubmitCallback = useCallback(async () => {
+    if (isCodeSent) {
+      userStore
+        .verifyPhone(userPk, code)
+        .then(() => {
           userStore.loadUser(userPk);
+        })
+        .catch((error) => {
+          openErrorNotification(error.response.data);
         });
-      } else {
-        window.grecaptcha.ready(function () {
-          window.grecaptcha
-            .execute(rootStore.recaptchaSiteKey, { action: 'mobile_verification_code' })
-            .then(async function (token) {
-              await userStore.updateUser({
-                pk: userPk,
-                email: user.email,
-                unverified_phone_number: phone,
-              });
+    } else {
+      await userStore.updateUser({
+        pk: userPk,
+        email: user.email,
+        unverified_phone_number: phone,
+      });
 
-              switch (type) {
-                case 'verification_call':
-                  userStore.fetchVerificationCall(userPk, token).then(() => {
-                    setState({ isPhoneCallInitiated: true });
-                    if (codeInputRef.current) {
-                      codeInputRef.current.focus();
-                    }
-                  });
-                  break;
-                case 'verification_sms':
-                  userStore.fetchVerificationCode(userPk, token).then(() => {
-                    setState({ isCodeSent: true });
-                    if (codeInputRef.current) {
-                      codeInputRef.current.focus();
-                    }
-                  });
-                  break;
-              }
-            });
+      userStore
+        .fetchVerificationCode(userPk, null)
+        .then(() => {
+          setState({ isCodeSent: true });
+
+          if (codeInputRef.current) {
+            codeInputRef.current.focus();
+          }
+        })
+        .catch(() => {
+          openErrorNotification(
+            'Grafana OnCall is unable to verify your phone number due to incorrect number or verification service being unavailable.'
+          );
         });
-      }
-    },
-    [
-      code,
-      isCodeSent,
-      phone,
-      user.email,
-      userPk,
-      userStore.verifyPhone,
-      userStore.updateUser,
-      userStore.fetchVerificationCode,
-    ]
-  );
+    }
+  }, [
+    code,
+    isCodeSent,
+    phone,
+    user.email,
+    userPk,
+    userStore.verifyPhone,
+    userStore.updateUser,
+    userStore.fetchVerificationCode,
+  ]);
+
 
   const onVerifyCallback = useCallback(async () => {
     userStore.verifyPhone(userPk, code).then(() => {
@@ -168,13 +157,11 @@ const PhoneVerification = observer((props: PhoneVerificationProps) => {
   const showPhoneInputError = phoneHasMinimumLength && !isPhoneValid && !isPhoneNumberHidden && !isLoading;
 
   const action = isCurrentUser ? UserActions.UserSettingsWrite : UserActions.UserSettingsAdmin;
-  const isButtonDisabled =
-    phone === user.verified_phone_number ||
-    (!isCodeSent && !isPhoneValid && !isPhoneCallInitiated) ||
-    !isPhoneProviderConfigured;
+  const isButtonDisabled = 
+    phone === user.verified_phone_number || (!isCodeSent && !isPhoneValid) || !isPhoneProviderConfigured;
 
   const isPhoneDisabled = !!user.verified_phone_number;
-  const isCodeFieldDisabled = (!isCodeSent && !isPhoneCallInitiated) || !isUserActionAllowed(action);
+  const isCodeFieldDisabled = !isCodeSent || !isUserActionAllowed(action);
   const showToggle = user.verified_phone_number && isCurrentUser;
 
   if (showForgetScreen) {
